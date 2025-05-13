@@ -1,277 +1,208 @@
-# Graded Awareness Experiment with Implicit Priming
-# ----------------------------------------------------
-# Author: (your name here)
-# PsychoPy version: 2025.1
-# Description:
-#   Continuous‑report Gabor orientation task with individualized
-#   SOA staircasing, confidence ratings, catch trials, and optional
-#   implicit‐priming RT probe. Tuned for a 144 Hz monitor.
-# ----------------------------------------------------
+"""
+Graded-Awareness Toy Demo
+-------------------------
+A lean PsychoPy implementation of:
+mask → stimulus (SOA) → mask → orientation + confidence
+→ mask → stimulus (same SOA) → mask → prime → reverse-mask → RT  (← / →)
 
-from psychopy import core, visual, event, data, gui, prefs, logging, monitors
+Author : you
+Version: 2025-05-12  (toy settings)
+"""
+
+from psychopy import core, visual, event, data, gui, logging, monitors
 from psychopy.hardware import keyboard
-import numpy as np
-import random
-import os
+import numpy as np, random, csv, os, math, datetime
 
-# -----------------------
-# EXPERIMENT PARAMETERS
-# -----------------------
-MONITOR_REFRESH_HZ = 144               # set to your display
-FRAME_DUR = 1.0 / MONITOR_REFRESH_HZ   # seconds per frame
+# ===============  HYPER-PARAMETERS (Toy)  ========================
+N_PRACTICE            = 2
+N_STAIR_TRIALS        = 6
+STAIR_STEP_MS         = 20           # ms
+MIN_SOA_MS            = 50
+MAX_SOA_MS            = 150
+N_SOAS                = 3
+TRIALS_PER_SOA        = 3            # 3 × 3  = 9 main trials
+PRIME_MATCH_PROB      = 0.50         # congruent vs. incongruent
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-FIXATION_DUR   = 0.500  # s
-MASK_DUR       = 0.100  # s (forward & backward)
-PRIME_DUR      = 0.016  # s (one frame @ 60 Hz, ~2 frames @144 Hz)
-ITI_MEAN       = 0.800  # mean ITI (jitter added)
+FIX_MS      = 500
+MASK_MS     = 100
+PRIME_MS    = 33                     # one 30-Hz frame ≈ 33 ms
+REV_MASK_MS = 100
+FPS         = 60                     # change if needed
+# ================================================================
 
-# Staircase settings
-STAIR_INITIAL_SOA = 0.100             # initial guess 100 ms
-STAIR_MIN_SOA     = 0.016             # minimum 1 frame
-STAIR_MAX_SOA     = 0.300             # maximum 300 ms
-STAIR_N_REVERSALS = 8
-STAIR_N_TRIALS    = 40
-STAIR_STEP        = 0.016             # step size 1 frame
-TARGET_ACC        = 0.75
+# ----------  Basic dialog & files ----------
+exp_info = {
+    "Participant": "",
+    "Run": "001",
+    "Date": datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+}
+if not gui.DlgFromDict(exp_info, title="Graded-Awareness Toy").OK:
+    core.quit()
 
-# Main‑block settings
-SOA_STEPS_AROUND = [-0.05, -0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03, 0.05]  # relative to thresh
-TRIALS_PER_SOA   = 30                 # total ~270 trials
-CATCH_PROB       = 0.10               # 10 % catch trials
-PRIME_PROB       = 0.50               # 50 % of (non‑catch) trials
+this_dir = os.path.dirname(os.path.abspath(__file__))
+data_dir = os.path.join(this_dir, "data")
+os.makedirs(data_dir, exist_ok=True)
+csv_path = os.path.join(data_dir,
+    f"{exp_info['Participant']}_{exp_info['Run']}_{exp_info['Date']}.csv")
 
-CONF_LEVELS      = [0,10,20,30,40,50,60,70,80,90,100]  # confidence scale
+csv_file = open(csv_path, "w", newline="")
+csv_writer = csv.writer(csv_file)
+csv_writer.writerow(["subj","phase","trial",
+                     "soa_ms","target_ori","estimate",
+                     "confidence","rt_prime_ms",
+                     "prime_congruent","seen_in_stair"])
 
-# -----------------------
-# INITIAL SETUP
-# -----------------------
-
+# ----------  Window / stimuli ----------
 mon = monitors.Monitor('testMonitor')  
 mon.setWidth(73)          # physical width of your display in cm
 mon.setDistance(75)       # your viewing distance in cm
 mon.setSizePix([SCREEN_WIDTH,SCREEN_HEIGHT])
-
-exp_info = {"Participant":"", "Run":"001"}
-dlg = gui.DlgFromDict(exp_info, title="Graded Awareness Study")
-if not dlg.OK:
-    core.quit()
-
-filename = f"data/{exp_info['Participant']}_{exp_info['Run']}".replace(" ", "_")
-this_dir = os.path.dirname(os.path.abspath(__file__))
-if not os.path.isdir(os.path.join(this_dir, 'data')):
-    os.makedirs(os.path.join(this_dir, 'data'))
-
 # Window
 win = visual.Window(
     size=(SCREEN_WIDTH,SCREEN_HEIGHT), 
-    fullscr=True, 
+    fullscr=False, 
     monitor=mon,
     units='deg'
 )
-win.setRecordFrameIntervals(True)
-kb = keyboard.Keyboard()
+mouse = event.Mouse(win=win)
+kb    = keyboard.Keyboard()
 
-# Stimuli
-fixation = visual.TextStim(win, text='+', color='white', height=0.8)
-noise_tex = np.random.rand(256,256)*2-1
-mask_tex  = visual.GratingStim(win, tex=noise_tex, size=10, sf=0, units='deg')
+fix = visual.TextStim(win, text="+", height=0.8, color="white")
+noise_array = (np.random.rand(256,256) * 255).astype('uint8')
+mask = visual.ImageStim(win,
+                        image=noise_array,
+                        size=10,
+                        units="deg",
+                        interpolate=False)
+gabor = visual.GratingStim(win, tex="sin", mask="gauss",
+                           size=5, sf=3, units="deg", contrast=1.0)
+prime_prompt = visual.TextStim(win, text="Tilt?  ←  /  →",
+                               height=0.8, color="white")
+line_probe = visual.Line(win, start=(0,0), end=(0,4),
+                         lineWidth=4, lineColor="white", units="deg")
 
-# Gabor template (orientation set later each trial)
-gabor = visual.GratingStim(win, tex='sin', mask='gauss', size=5, sf=3, units='deg', contrast=1.0)
+conf_bar = visual.Rect(win, width=8, height=0.6, lineColor="white",
+                       fillColor=None, pos=(0,-4))
+conf_marker = visual.Rect(win, width=0.2, height=0.8,
+                          lineColor=None, fillColor="white")
 
-# Probe for continuous‑report
-probe_line = visual.Line(win, start=(0,0), end=(0,4), lineColor='white', lineWidth=4, units='deg')
+# ----------  Helper functions ----------
+def wait_ms(ms):
+    core.wait(ms/1000.0)
 
-# Confidence text
-conf_text = visual.TextStim(win, text='', color='white', height=0.8, wrapWidth=20)
+def angle_from_mouse():
+    x,y = mouse.getPos()
+    angle = (math.degrees(math.atan2(y,x)) + 360) % 180  # 0-180
+    return angle
 
-# RT Choice prompt
-rt_prompt = visual.TextStim(win, text='Tilt?  ← / →', color='white', height=0.8)
-
-# -----------------------
-# HELPER FUNCTIONS
-# -----------------------
-
-def draw_and_wait(stim, dur):
-    stim.draw()
-    win.flip()
-    core.wait(dur)
-
-
-def orientation_error(resp_angle, true_angle):
-    diff = (resp_angle - true_angle + 90) % 180 - 90
-    return diff
-
-
-def get_confidence():
-    idx = 0
+def orientation_estimate():
+    mouse.clickReset()
     while True:
-        conf_text.text = f"Confidence you saw anything? {CONF_LEVELS[idx]}%\n[left/right to adjust, space to confirm]"
-        conf_text.draw()
+        line_probe.ori = angle_from_mouse()
+        line_probe.draw(); win.flip()
+        if mouse.getPressed()[0]:  # left click to confirm
+            core.wait(0.2)
+            return line_probe.ori
+
+def confidence_estimate():
+    mouse.clickReset()
+    while True:
+        x,_ = mouse.getPos()
+        x = np.clip(x, -4, 4)
+        pct = int(np.interp(x, (-4,4), (0,100))//10*10)
+        conf_marker.pos = (x,-4)
+        conf_bar.draw(); conf_marker.draw()
+        visual.TextStim(win,
+            text=f"Confidence you saw ANY stimulus: {pct} %",
+            pos=(0,-2.5), height=0.6).draw()
         win.flip()
-        keys = event.waitKeys(keyList=['left','right','space','escape'])
-        if 'escape' in keys: core.quit()
-        if 'left' in keys and idx>0: idx -= 1
-        if 'right' in keys and idx<len(CONF_LEVELS)-1: idx += 1
-        if 'space' in keys: return CONF_LEVELS[idx]
+        if mouse.getPressed()[0]:
+            core.wait(0.2)
+            return pct
 
+def draw_and_wait(stim, ms):
+    stim.draw(); win.flip(); wait_ms(ms)
 
-def continuous_report():
-    angle = 0
-    while True:
-        probe_line.ori = angle
-        probe_line.draw(); win.flip()
-        keys = event.getKeys()
-        if 'escape' in keys: core.quit()
-        if 'left' in keys:  angle -= 1
-        if 'right' in keys: angle += 1
-        if 'space' in keys: return angle % 180
+# ----------  Practice ----------
+for p in range(N_PRACTICE):
+    true_ori = random.uniform(0,180)
+    fix.draw(); win.flip(); wait_ms(FIX_MS)
+    draw_and_wait(mask, MASK_MS)
+    gabor.ori = true_ori
+    draw_and_wait(gabor, 150)
+    draw_and_wait(mask, MASK_MS)
+    est = orientation_estimate()
+    conf = confidence_estimate()
 
+# ----------  Simple staircase (1-up / 1-down) ----------
+soa_ms = (MIN_SOA_MS+MAX_SOA_MS)/2
+for s in range(N_STAIR_TRIALS):
+    true_ori = random.uniform(0,180)
+    fix.draw(); win.flip(); wait_ms(FIX_MS)
+    draw_and_wait(mask, MASK_MS)
+    gabor.ori = true_ori
+    draw_and_wait(gabor, soa_ms)
+    draw_and_wait(mask, MASK_MS)
+    est = orientation_estimate()
+    err = abs((est-true_ori+90)%180-90)
+    seen = err < 30  # arbitrary “saw” criterion
+    # staircase update
+    if seen: soa_ms = max(MIN_SOA_MS, soa_ms-STAIR_STEP_MS)
+    else:    soa_ms = min(MAX_SOA_MS, soa_ms+STAIR_STEP_MS)
 
-def run_rt_probe(prime_ori, match):
-    # prime orientation: either matches target or orthogonal (prime_od)
-    gabor.ori = prime_ori if match else (prime_ori+90) % 180
-    draw_and_wait(gabor, PRIME_DUR)
-    draw_and_wait(mask_tex, MASK_DUR)
-    rt_prompt.draw(); win.flip(); kb.clock.reset();
-    key = kb.waitKeys(keyList=['left','right','escape'])[0]
-    rt = kb.clock.getTime()
-    if key.name == 'escape': core.quit()
-    correct = (key.name == 'left' and gabor.ori<90) or (key.name=='right' and gabor.ori>=90)
-    return rt, correct
-
-# -----------------------
-# INSTRUCTIONS & TRAINING
-# -----------------------
-
-instruction_pages = [
-    "Welcome!\n\nYou will briefly see a grating (striped pattern).\nYour tasks:\n1. Adjust the white line to match the grating’s tilt.\n2. Rate how confident you are that ANY stimulus was present.\n3. Occasionally respond LEFT or RIGHT as quickly as possible.\n\nPress SPACE to continue.",
-    "During the task, some trials will have NO stimulus.\nRate 0% confidence when you see nothing.\n\nAdjust line: ← →\nConfirm line: SPACE\nRate confidence: ← → then SPACE\nTilt RT: ← (left)  → (right)\n\nPress SPACE to begin a short practice."
-]
-for page in instruction_pages:
-    visual.TextStim(win, text=page, color='white', height=0.8, wrapWidth=20).draw(); win.flip(); event.waitKeys(keyList=['space'])
-
-# Practice trials (5 demo trials, fixed easy SOA)
-for _ in range(5):
-    ori = random.uniform(0,180)
-    fixation.draw(); win.flip(); core.wait(FIXATION_DUR)
-    draw_and_wait(mask_tex, MASK_DUR)
-    gabor.ori = ori
-    draw_and_wait(gabor, 0.150)
-    draw_and_wait(mask_tex, MASK_DUR)
-    resp_angle = continuous_report()
-    conf_val   = get_confidence()
-    core.wait(0.3)
-
-# -----------------------
-# STAIRCASE (2‑up/1‑down)
-# -----------------------
-
-dlg = gui.Dlg(title='Staircase starting...'); dlg.addText('Press OK'); dlg.show()
-
-stair_handler = data.StairHandler(startVal=STAIR_INITIAL_SOA, stepSizes=STAIR_STEP,
-                                 stepType='lin', nTrials=STAIR_N_TRIALS, nUp=2, nDown=1,
-                                 minVal=STAIR_MIN_SOA, maxVal=STAIR_MAX_SOA, targetVal=TARGET_ACC)
-
-for soa in stair_handler:
-    ori = random.uniform(0,180)
-    # --- Trial sequence ---
-    fixation.draw(); win.flip(); core.wait(FIXATION_DUR)
-    draw_and_wait(mask_tex, MASK_DUR)
-    gabor.ori = ori
-    draw_and_wait(gabor, soa)
-    draw_and_wait(mask_tex, MASK_DUR)
-    resp_angle = continuous_report()
-    err = abs(orientation_error(resp_angle, ori))
-    correct = err < 15  # coarse 30° window for staircase
-    stair_handler.addResponse(correct)
-
-# threshold estimate
-thresh_soa = np.median(stair_handler.reversals) if stair_handler.reversals else stair_handler.mean()
-print(f"Estimated 75% SOA: {thresh_soa*1000:.1f} ms")
-
-# Generate SOA list for main trials
-soa_list = [max(STAIR_MIN_SOA, min(STAIR_MAX_SOA, thresh_soa+delta)) for delta in SOA_STEPS_AROUND]
+# ----------  Build main trial list ----------
+SOAS = np.linspace(MIN_SOA_MS, MAX_SOA_MS, N_SOAS)
 trials = []
-for soa in soa_list:
+for soa in SOAS:
     for _ in range(TRIALS_PER_SOA):
         trials.append({
-            'soa': soa,
-            'catch': random.random() < CATCH_PROB,
-            'prime': False,
-            'prime_match': False
+            "soa": soa,
+            "prime_congruent": random.random() < PRIME_MATCH_PROB
         })
 random.shuffle(trials)
 
-# Assign primes
-for t in trials:
-    if (not t['catch']) and random.random() < PRIME_PROB:
-        t['prime'] = True
-        t['prime_match'] = random.choice([True, False])
+# ----------  MAIN LOOP ----------
+for tidx, trial in enumerate(trials):
+    true_ori = random.uniform(0,180)
 
-trial_handler = data.TrialHandler(trials, 1, method='sequential', name='main')
-trial_handler.data.addDataType('orientation')
-trial_handler.data.addDataType('resp_angle')
-trial_handler.data.addDataType('conf')
-trial_handler.data.addDataType('err')
-trial_handler.data.addDataType('rt')
-trial_handler.data.addDataType('rt_correct')
+    # first presentation
+    fix.draw(); win.flip(); wait_ms(FIX_MS)
+    draw_and_wait(mask, MASK_MS)
+    gabor.ori = true_ori
+    draw_and_wait(gabor, trial["soa"])
+    draw_and_wait(mask, MASK_MS)
 
-# -----------------------
-# MAIN LOOP
-# -----------------------
+    # orientation + confidence
+    est = orientation_estimate()
+    conf = confidence_estimate()
 
-for trial in trial_handler:
-    # stimulus orientation
-    ori = random.uniform(0,180)
+    # prime + RT
+    draw_and_wait(mask, MASK_MS)
+    gabor.ori = true_ori
+    draw_and_wait(gabor, trial["soa"])
+    draw_and_wait(mask, MASK_MS)
+    prime_ori = true_ori if trial["prime_congruent"] else (true_ori+90)%180
+    gabor.ori = prime_ori
+    draw_and_wait(gabor, PRIME_MS)
+    draw_and_wait(mask, REV_MASK_MS)
+    prime_prompt.draw(); win.flip(); kb.clock.reset()
+    key = kb.waitKeys(keyList=["left","right"])[0]
+    rt_ms = kb.clock.getTime()*1000
 
-    # fixation
-    fixation.draw(); win.flip(); core.wait(FIXATION_DUR)
+    # log immediately
+    csv_writer.writerow([exp_info["Participant"],
+        "main", tidx, trial["soa"], true_ori, est, conf,
+        rt_ms, trial["prime_congruent"], ""])
+    csv_file.flush()
 
-    # forward mask
-    draw_and_wait(mask_tex, MASK_DUR)
+    # inter-trial pause
+    wait_ms(300)
 
-    # target presentation (or catch)
-    if not trial['catch']:
-        gabor.ori = ori
-        draw_and_wait(gabor, trial['soa'])
-    else:
-        core.wait(trial['soa'])  # gap of equal duration
-
-    # backward mask
-    draw_and_wait(mask_tex, MASK_DUR)
-
-    # first‑order report
-    resp_angle = continuous_report()
-
-    # second‑order confidence
-    conf_val = get_confidence()
-
-    # optional implicit prime
-    rt = np.nan; rt_correct = np.nan
-    if trial['prime']:
-        rt, rt_correct = run_rt_probe(ori, trial['prime_match'])
-
-    # log
-    err_val = orientation_error(resp_angle, ori) if not trial['catch'] else np.nan
-    trial_handler.addData('orientation', ori)
-    trial_handler.addData('resp_angle', resp_angle)
-    trial_handler.addData('conf', conf_val)
-    trial_handler.addData('err', err_val)
-    trial_handler.addData('rt', rt)
-    trial_handler.addData('rt_correct', rt_correct)
-
-    # ITI
-    iti = np.random.exponential(ITI_MEAN)
-    core.wait(iti)
-
-# Save data
-trial_handler.saveAsWideText(filename + '.csv')
-trial_handler.saveAsPickle(filename)
-
-# End screen
-visual.TextStim(win, text='Thank you!\n\nPress ESC or close window to exit.', color='white', height=1.0).draw(); win.flip()
-keys = event.waitKeys(keyList=['escape']);
+# ----------  tidy up ----------
+csv_file.close()
+visual.TextStim(win, text="Done!  Press ESC to quit.",
+                height=1).draw(); win.flip()
+event.waitKeys(keyList=["escape"])
 core.quit()
