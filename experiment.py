@@ -11,7 +11,7 @@ Spring 2025
 """
 
 from psychopy import core, visual, event, data, gui, logging, monitors
-from psychopy.data import StairHandler
+from psychopy.data import StairHandler, QuestHandler
 from psychopy.hardware import keyboard
 import numpy as np, random, csv, os, math, datetime
 import numpy.fft as fft
@@ -19,22 +19,22 @@ import math
 
 
 # ====================  HYPER-PARAMETERS  ========================
-N_PRACTICE            = 10
-N_DETECT_PRACTICE     = 20
-N_STAIR_TRIALS        = 50
-STAIR_STEP_MS         = 21
-STAIR_START_MS        = 150
+N_PRACTICE            = 8
+N_DETECT_PRACTICE     = 23
+N_STAIR_TRIALS        = 70
+STAIR_STEP_MS         = 7
+STAIR_START_MS        = 100
 MIN_SOA_MS            = 7
 MAX_SOA_MS            = 500
 N_SOAS                = 9
-TRIALS_PER_SOA        = 15
+TRIALS_PER_SOA        = 16
 PRIME_CONTRAST        = 0.35
+PRIME_OPACITY         = 0.5
 PRIME_MATCH_PROB      = 0.50
-CATCH_PROB            = 0.15
+CATCH_PER_SOA         = 2
 ORIENTATIONS          = [45, 135]
-FIX_MS                = 100
 MASK_MS               = 100
-PRIME_SOA             = 7
+PRIME_SOA             = 5
 REV_MASK_MS           = 100
 # ================================================================
 
@@ -81,17 +81,29 @@ win = visual.Window(
     monitor=mon,
     units='deg'
 )
+FRAME_MS, msPFstd, msPFmed = win.getMsPerFrame(nFrames=144)
+prep_text = visual.TextStim(
+    win,
+    text="Preparing experiment...",
+    color="white",
+    height=1.0,
+    wrapWidth=45
+)
+prep_text.draw()
+win.flip()
+win.recordFrameIntervals = True 
+win.refreshThreshold    = FRAME_MS*1.5/1000
+logging.console.setLevel(logging.WARNING)
 mouse = event.Mouse(win=win)
 kb    = keyboard.Keyboard()
-FRAME_MS, msPFstd, msPFmed = win.getMsPerFrame(nFrames=144)
 print(f"Measured frame duration: {FRAME_MS:.3f} ms")
+win.flip()
 
 # ----------  Stimuli Initialization ----------
-
 fix = visual.TextStim(win, text="+", height=0.8, color="white")
 gabor = visual.GratingStim(win, tex="sin", mask="gauss",
-                           size=5, sf=3, units="deg", contrast=PRIME_CONTRAST, opacity=0.5)
-detect_prompt = visual.TextStim(win, text="Did you see any stimulus?  ↑ YES /  ↓ NO",
+                           size=5, sf=3, units="deg", contrast=PRIME_CONTRAST, opacity=PRIME_OPACITY)
+detect_prompt = visual.TextStim(win, text="Did you see any stimulus?",
                                height=0.8, color="white")
 prime_prompt = visual.TextStim(win, text="Tilt?  (a) ←  /  → (d)",
                                height=0.8, color="white")
@@ -101,7 +113,7 @@ conf_bar = visual.Rect(win, width=8, height=0.6, lineColor="white",
 conf_marker = visual.Rect(win, width=0.2, height=0.8,
                           lineColor=None, fillColor="white")
 
-mask_stim = visual.ImageStim(win, image=None, units="deg",
+mask_stim = visual.ImageStim(win, image=None, units="deg", texRes=256,
                             size=10, interpolate=False, colorSpace='rgb')
 
 # ----------  Helper functions ----------
@@ -115,7 +127,7 @@ def text_and_wait(text, ms=0):
         text=text,
         color="white",
         height=1.0,
-        wrapWidth=75
+        wrapWidth=45
     )
     transition_text.draw()
     win.flip()
@@ -144,6 +156,7 @@ def detection_yn():
     mouse.clickReset()
 
     while True:
+        detect_prompt.draw()
         yes_button.fillColor = 'lightgrey' if yes_button.contains(mouse) else 'darkgrey'
         no_button.fillColor  = 'lightgrey' if no_button.contains(mouse)  else 'darkgrey'
 
@@ -235,23 +248,44 @@ def draw_gabor(orientation, soa):
     if blank_time:
         draw_blank(blank_time)
 
+rng = np.random.default_rng(42)
+N_NOISE_FRAMES = 200
+NOISE_FRAMES = np.stack([make_bandpass_noise(256) for _ in range(N_NOISE_FRAMES)])
+frame_counter = 0
 def draw_dynamic_mask(ms):
+    global frame_counter
     n_frames = max(1, int(round(ms/FRAME_MS)))
     for _ in range(n_frames):
-        bp = make_bandpass_noise(256)
-        mask_stim.image = bp
+        idx = frame_counter
+        frame_counter = (frame_counter + 1) % N_NOISE_FRAMES
+        # idx = rng.integers(N_NOISE_FRAMES) 
+        mask_stim.image = NOISE_FRAMES[idx]
         mask_stim.draw()
-        win.flip()
+        win.flip(clearBuffer=False)
+
 
 # ----------  Practice ----------
 PRACTICE_TEXT = (
     "~~ Welcome ~~\n\n"
-    "You will complete ~160 rapid trials over about 15–20 minutes.\n"
+    "You will complete 180 rapid trials over about 15-20 minutes.\n"
     "On each trial, keep your eyes on the center cross."
 )
 text_and_wait(PRACTICE_TEXT)
+fix.draw()
+PRACTICE_TEXT = visual.TextStim(
+    win,
+    text="\n\n\n\n\nThis is the fixation point, keep your eyes here for the experiment duration.",
+    color="white",
+    height=1.0,
+    wrapWidth=45
+)
+PRACTICE_TEXT.draw()
+win.flip()
+while True:
+    if event.getKeys():
+        break
 PRACTICE_TEXT = (
-    "First, you’ll see a field of dynamic noise.\n\n"
+    "First, you'll see a field of dynamic noise.\n\n"
     "Press any key to see an example."
 )
 text_and_wait(PRACTICE_TEXT)
@@ -277,7 +311,7 @@ PRACTICE_TEXT = (
 )
 text_and_wait(PRACTICE_TEXT)
 PRACTICE_TEXT = "\n\n\n\n\n\n\n\n\n\n\nPress any key to continue."
-gabor.ori = random.choice(ORIENTATIONS)
+gabor.ori = 45 #random.choice(ORIENTATIONS)
 gabor.draw()
 transition_text = visual.TextStim(
     win,
@@ -300,98 +334,104 @@ PRACTICE_TEXT = (
 )
 text_and_wait(PRACTICE_TEXT)
 PRACTICE_TEXT = (
-    "Now we’ll do a few practice trials to get you familiar with the timing.\n"
-    "After that, we’ll adjust the difficulty to your threshold."
+    "Now we'll do a few practice trials to get you familiar with the timing.\n"
+    "You will not receive any feedback about your responses."
 )
 text_and_wait(PRACTICE_TEXT)
     
-PRACTICE_SOA = 400
-# for p in range(N_PRACTICE):
-#     true_ori = random.choice(ORIENTATIONS)
-#     draw_and_wait(fix, FIX_MS)
-#     draw_dynamic_mask(MASK_MS)
-#     draw_gabor(true_ori, PRACTICE_SOA)
-#     draw_dynamic_mask(MASK_MS)
-#     detected = detection_yn()
-#     conf = confidence_estimate()
-
-#     print(PRACTICE_SOA, False, detected, conf, "n/a", "n/a", "n/a")
+PRACTICE_SOA = 91
+draw_and_wait(fix, 750)
 for p in range(N_PRACTICE):
     true_ori = random.choice(ORIENTATIONS)
     congruent = random.random() < PRIME_MATCH_PROB
     prime_ori = true_ori if congruent else (true_ori + 90) % 180
-    draw_and_wait(fix, 750)
     draw_dynamic_mask(MASK_MS)
     draw_gabor(true_ori, PRACTICE_SOA)
     draw_dynamic_mask(MASK_MS)
     draw_gabor(prime_ori, PRIME_SOA)
-    draw_dynamic_mask(MASK_MS)
+    draw_dynamic_mask(REV_MASK_MS)
+    draw_blank(np.random.randint(250, 550))
     prime_key, rt_ms = prime_rt()
     detected = detection_yn()
     conf = confidence_estimate()
 
     prime_correct = (prime_ori == 45 and prime_key == "d") or (prime_ori == 135 and prime_key == "a")
-    print(PRACTICE_SOA, False, detected, conf, rt_ms, congruent, prime_correct)
+    print(PRACTICE_SOA, False, detected, conf, rt_ms, congruent, prime_correct, prime_ori)
+
+    ITI = np.random.randint(650, 950)
+    draw_and_wait(fix, ITI)
+
 
 # ----------  Detection Practice ----------
-STAIRCASE_TEXT = "Next, still for practice, you will be presented some stimuli which may have a stimulus present. Select whether you saw the stimulus. You will be informed if you are incorrect."
-text_and_wait(STAIRCASE_TEXT)
-soa_ms = STAIR_START_MS
+PRACTICE_TEXT = (
+    "Now, to help you calibrate your detection, you will be presented some trials which always have a stimulus present.\n"
+    "Select whether the stimulus was tilted left (a) or right (d). You will be informed if you are incorrect.\n"
+    "The task will get more challenging as it goes on."
+)
+text_and_wait(PRACTICE_TEXT)
+soa_ms = MAX_SOA_MS
 for s in range(N_DETECT_PRACTICE):
-    catch_test = random.random() < 0.5
+    catch_test = random.random() < 0.0
     true_ori = random.choice(ORIENTATIONS)
     draw_and_wait(fix, 750)
     draw_dynamic_mask(MASK_MS)
-    if not catch_test:
-        draw_gabor(true_ori, soa_ms)
-        draw_dynamic_mask(MASK_MS)
-    else:
-        draw_blank(soa_ms)
-        draw_dynamic_mask(MASK_MS)
-    detected = detection_yn()
-
-    if detected == catch_test:
+    draw_gabor(true_ori, soa_ms)
+    draw_dynamic_mask(MASK_MS)
+    # detected = detection_yn()
+    key, rt_ms = prime_rt()
+    correct = ((true_ori == 45 and key == 'd') or
+               (true_ori == 135 and key == 'a'))
+    if not correct:
         text_and_wait("Incorrect.", 500)
-    
-    if not catch_test:
-        if detected: soa_ms = max(MIN_SOA_MS, soa_ms-STAIR_STEP_MS)
-        else:    soa_ms = min(MAX_SOA_MS, soa_ms+STAIR_STEP_MS)
-    print("Seen:", detected, "Stimulus:", not catch_test, "soa ms:", soa_ms)
+    soa_ms = max(MIN_SOA_MS, soa_ms-21)
+    # print("Seen:", detected, "Stimulus:", not catch_test, "soa ms:", soa_ms)
+
 
 # ----------  Simple staircase (1-up / 1-down) ----------
-STAIRCASE_TEXT = "We will now calibrate the difficulty to determine your threshold."
-text_and_wait(STAIRCASE_TEXT)
-stairs = StairHandler(
-    startVal=int(round(STAIR_START_MS/FRAME_MS))*FRAME_MS,
-    stepType='lin',
-    stepSizes=FRAME_MS,
-    nTrials=N_STAIR_TRIALS,
-    minVal=MIN_SOA_MS,
-    maxVal=MAX_SOA_MS,
+STAIRCASE_TEXT = (
+    "We will now calibrate the difficulty.\n"
+    "Each trial contains a very brief tilted grating: guess left (a) or right (d).\n"
+    "The staircase will adjust the blank interval after the 1-frame target."
 )
-for soa in stairs:
+text_and_wait(STAIRCASE_TEXT)
+start_frames = round(STAIR_START_MS / FRAME_MS)        #  ≈15 frames
+quest = data.QuestHandler(
+    startVal     = np.log10(start_frames),
+    startValSd   = 0.5,
+    pThreshold   = .75,    gamma=.50, beta=3.5, delta=.02,
+    nTrials      = N_STAIR_TRIALS,
+    minVal       = np.log10(max(1, round(MIN_SOA_MS / FRAME_MS))),
+    maxVal       = np.log10(round(MAX_SOA_MS / FRAME_MS)),
+)
+soas_collected = []
+performance = []
+for log_frames in quest:
+    frames   = max(1, int(round(10**log_frames)))      # 3.  Discretise
+    soa = frames * FRAME_MS
+    soas_collected.append(soa)
     true_ori = random.choice(ORIENTATIONS)
     draw_and_wait(fix, 750)
     draw_dynamic_mask(MASK_MS)
     draw_gabor(true_ori, soa)
     draw_dynamic_mask(MASK_MS)
-    detect_key = detection_yn()
-    detected = (detect_key == "up")
-    stairs.addResponse(int(detected))
-revs = stairs.reversalIntensities
-print(revs)
-if len(revs) >= 6:
-    SC_SOA = np.mean(revs[-6:])
-else:
-    SC_SOA = np.mean(revs) 
+    key, rt_ms = prime_rt()
+    correct = ((true_ori == 45 and key == 'd') or
+               (true_ori == 135 and key == 'a'))
+    performance.append(correct)
+    quest.addResponse(int(correct))
+
+print(soas_collected)
+print(performance)
+logT = quest.quantile()
+SC_FRAMES = max(1, int(round(10**logT)))
+SC_SOA = SC_FRAMES * FRAME_MS
 print("Threshold:", SC_SOA)
 
+
 # ----------  Build main trial list ----------
-if N_SOAS == 9:
-    SOA_OFFSETS_MS = np.array([-50, -35, -20, -10, 0, 10, 20, 35, 50])
-else:
-    SOA_OFFSETS_MS = np.array([-40, -25, -10, 0, 10, 25, 40])
-SOAS = SC_SOA + SOA_OFFSETS_MS
+offset_frames = np.array([-4, -3, -2, -1, 0, 1, 2, 3, 4])
+SOA_frames = np.clip(SC_FRAMES + offset_frames, 1, None)
+SOAS = SOA_frames * FRAME_MS
 SOAS = np.clip(SOAS, MIN_SOA_MS, MAX_SOA_MS)
 print(SOAS)
 trials = []
@@ -403,51 +443,56 @@ for soa in SOAS:
             "prime_congruent": random.random()<PRIME_MATCH_PROB,
             "prime": True
         })
-n_catch = int(TRIALS_PER_SOA * len(SOAS) * CATCH_PROB)
-for _ in range(n_catch):
-    trials.append({
-        "soa": SC_SOA,
-        "catch": True,
-        "prime_congruent": False,
-        "prime": True
-    })
-    trials.append({
-        "soa": SC_SOA,
-        "catch": False,
-        "prime_congruent": False,
-        "prime": False
-    })
+    for _ in range(CATCH_PER_SOA):
+        trials.append({
+            "soa": soa,
+            "catch": True,
+            "prime_congruent": False,
+            "prime": True
+        })
+        trials.append({
+            "soa": soa,
+            "catch": False,
+            "prime_congruent": False,
+            "prime": False
+        })
 random.shuffle(trials)
 
 # ----------  MAIN LOOP ----------
-EXPERIMENT_TEXT = "We will now begin the experiment."
+BREAK_TEXT = (
+    "You are halfway done! Please take a break, and continue when you are ready."
+)
+EXPERIMENT_TEXT = (
+    "We will now begin the experiment.\n"
+    "You must quickly select the tilt using 'a'/'d', and then answer whether you saw a stimulus along with your confidence.\n"
+    "Not every trial will have a stimulus present. Please click NO if you did not see any.\n"
+    "You will not receive any feedback about your responses.\n"
+    "There will be a break halfway through."
+)
+draw_and_wait(fix, 750)
 text_and_wait(EXPERIMENT_TEXT)
+text_and_wait("Fixate on the cross for the entire experiment duration.")
 for tidx, trial in enumerate(trials):
     true_ori = random.choice(ORIENTATIONS)
     prime_ori = true_ori if trial["prime_congruent"] else (true_ori+90)%180
-    draw_and_wait(fix, FIX_MS)
     draw_dynamic_mask(MASK_MS)
     if not trial["catch"]:
         draw_gabor(true_ori, trial['soa'])
-        draw_dynamic_mask(MASK_MS)
     else:
-        catch_ms = trial["soa"] or SC_SOA
-        draw_blank(catch_ms)
-        draw_dynamic_mask(MASK_MS)
+        draw_blank(trial["soa"])
+    draw_dynamic_mask(MASK_MS)
     if trial["prime"]:
         draw_gabor(prime_ori, PRIME_SOA)
-        draw_dynamic_mask(MASK_MS)
     else:
-        draw_blank(PRIME_SOA)
-        draw_dynamic_mask(MASK_MS)
+        draw_blank(FRAME_MS)
+    draw_dynamic_mask(REV_MASK_MS)
     draw_blank(np.random.randint(250, 550))
     prime_key, rt_ms = prime_rt()
-    detect_key = detection_yn()
+    detected = detection_yn()
     conf = confidence_estimate()
     
-    detected = (detect_key == "up")
     if trial["prime"]: 
-        prime_correct = ((prime_ori==45 and prime_key=="right") or (prime_ori==135 and prime_key=="left")) 
+        prime_correct = ((prime_ori==45 and prime_key=="d") or (prime_ori==135 and prime_key=="a")) 
     else: 
         prime_correct = None
     print(trial["soa"], trial["catch"], detected, conf, rt_ms, trial["prime_congruent"], prime_correct)
@@ -457,13 +502,24 @@ for tidx, trial in enumerate(trials):
                          trial["prime_congruent"], prime_correct, SC_SOA])
     csv_file.flush()
 
-    # inter-trial pause
     ITI = np.random.randint(650, 950)
     draw_and_wait(fix, ITI)
+
+    if tidx == (len(trials) // 2):
+        text_and_wait(BREAK_TEXT)
+        draw_and_wait(fix, 750)
 
 # ----------  tidy up ----------
 csv_file.close()
 visual.TextStim(win, text="Done!  Press ESC to quit.",
                 height=1).draw(); win.flip()
 event.waitKeys(keyList=["escape"])
+dropped = win.nDroppedFrames
+total   = len(win.frameIntervals)
+if dropped:
+    pct = dropped / total * 100
+    print(f"\nWARNING: {dropped} dropped frames "
+          f"({pct:0.2f}% of {total}) – check timing!")
+else:
+    print("\nNo dropped frames detected – timing OK.")
 core.quit()
