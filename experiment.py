@@ -29,7 +29,8 @@ MAX_SOA_MS            = 500
 N_SOAS                = 9
 TRIALS_PER_SOA        = 16
 PRIME_CONTRAST        = 0.35
-PRIME_OPACITY         = 0.5
+PRIME_OPACITY         = 0.4
+PRIME_SIZE            = 6
 PRIME_MATCH_PROB      = 0.50
 CATCH_PER_SOA         = 2
 ORIENTATIONS          = [45, 135]
@@ -102,7 +103,7 @@ win.flip()
 # ----------  Stimuli Initialization ----------
 fix = visual.TextStim(win, text="+", height=0.8, color="white")
 gabor = visual.GratingStim(win, tex="sin", mask="gauss",
-                           size=5, sf=3, units="deg", contrast=PRIME_CONTRAST, opacity=PRIME_OPACITY)
+                           size=PRIME_SIZE, sf=3, units="deg", contrast=PRIME_CONTRAST, opacity=PRIME_OPACITY)
 detect_prompt = visual.TextStim(win, text="Did you see any stimulus?",
                                height=0.8, color="white")
 prime_prompt = visual.TextStim(win, text="Tilt?  (a) ←  /  → (d)",
@@ -173,6 +174,7 @@ def detection_yn():
                 return False
 
 def prime_rt():
+    win.flip()
     win.callOnFlip(kb.clock.reset)
     prime_prompt.draw()
     win.flip()
@@ -417,8 +419,9 @@ for log_frames in quest:
     key, rt_ms = prime_rt()
     correct = ((true_ori == 45 and key == 'd') or
                (true_ori == 135 and key == 'a'))
+    print(soa, correct)
     performance.append(correct)
-    quest.addResponse(int(correct))
+    quest.addResponse(int(correct), intensity=)
 
 print(soas_collected)
 print(performance)
